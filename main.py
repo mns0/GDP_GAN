@@ -251,7 +251,7 @@ def d_train_step(
 
     # training with the fake batch
     # G(Z|Y) normal noise + condition
-    noise = torch.randn(batch_size, seq_len, 1, device=device)
+    noise = 2*torch.randn(batch_size, seq_len, 1, device=device)-1
     fake_data = netG(noise, conditional)
     flabel = torch.full((batch_size, ), fake_label, device=device)
     fake_data = torch.unsqueeze(fake_data, 2)
@@ -277,7 +277,7 @@ def g_train_step(
 
     netG.zero_grad()
     label = torch.full((batch_size, ), real_label, device=device)
-    noise = torch.randn(batch_size, seq_len, 1, device=device)
+    noise = 2*torch.randn(batch_size, seq_len, 1, device=device)-1
     fake_data = netG(noise, conditional).unsqueeze(2)
     output = netD(fake_data.detach(), conditional.detach()).view(-1)
     errG = criterion(output, label)
@@ -321,8 +321,8 @@ def main():
 
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
-    #fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-
+    #noise = torch.randn(batch_size, seq_len, 1, device=device)
+    #fake_data = netG(noise, conditional).unsqueeze(2)
     # Establish convention for real and fake labels during training
     arrloss = np.zeros((num_epochs,2))
     for epoch in range(num_epochs):
