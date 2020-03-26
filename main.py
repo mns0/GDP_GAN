@@ -28,6 +28,8 @@ class GDPData(Dataset):
         if normalize:
             self.normalize_table = np.zeros((df.shape[1], 2))  # (min, max)
             self.normalize(df)
+            #save_table
+            np.savetxt(csv_file+"normalization_table.txt",self.normalize_table)
 
         df.drop(df[(df.shape[0] // series_length *
                     series_length):].index, inplace=True)
@@ -61,6 +63,19 @@ class GDPData(Dataset):
             self.normalize_table[idx][0] = l
             self.normalize_table[idx][1] = m
             x[c] = 2 * ((x[c] - l) / (m - l)) - 1
+
+    def unnormalize(self, x):
+        """
+          Unnormalize data from [-1,1] range
+          for all predictors in dataframe
+        """
+        if not hasattr(self, 'normalize_table'):
+            raise Exception("Incorrectly calling normalize")
+        for idx, c in enumerate(x.columns):
+            _min = self.normalize_table[idx][0]
+            _max = self.normalize_table[idx][1]
+            x[c] = 0.5* (x*_max - x*_min + _max + _min)
+        return x
 
     def __len__(self):
         return self.t
@@ -273,7 +288,7 @@ def g_train_step(
 
 
 def main():
-    epoches, batch_size = 200, 20
+    epoches, batch_size = 100, 20
     real_label, fake_label = 1, 0
     num_epochs = 100
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -309,9 +324,10 @@ def main():
     #fixed_noise = torch.randn(64, nz, 1, 1, device=device)
 
     # Establish convention for real and fake labels during training
-
+    arrloss = np.zeros((num_epochs,2))
     for epoch in range(num_epochs):
         print("epoch: ", epoch)
+        dloss, gloss = 0,0
         for i, data in enumerate(dataloader):
             conditional, x, _ = data
             if conditional.size(0) < 20:
@@ -347,12 +363,21 @@ def main():
                 conditional,
                 optimizerG,
                 device)
-
+            dloss, gloss = errD + dloss, errG + gloss
             if i % 50 == 0:
                 print(
                     '[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f' %
                     (epoch, num_epochs, i, len(dataloader), errD, errG, D_x, D_G_z1, D_G_z2))
 
+        
+        arrloss[i] = [dloss,gloss]
+        if epoch % 5 == 0:
+            torch.save(netD, f'./models/netD_e{epoch}.pth')
+            torch.save(netG, f'./models/netG_e{epoch}.pth')
+
+
+
+    np.savetxt("loss.txt",arrloss)
 
 if __name__ == '__main__':
     main()
