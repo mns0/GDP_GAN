@@ -18,11 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
-
-
-
-
 # Create a dataloader
 class GDPData(Dataset):
     """GDP time series """
@@ -247,11 +242,12 @@ def d_train_step(
     fake_data = torch.unsqueeze(fake_data, 2)
     output = netD(fake_data.detach(), conditional.detach()).view(-1)
     errD_fake = criterion(output, flabel)
-    
+
     errD = errD_real + errD_fake
     errD.backward()
     optimizerD.step()
     return errD_real.mean().item(), errD_fake.mean().item(), errD.mean().item()
+
 
 def g_train_step(
         batch_size,
@@ -326,7 +322,7 @@ def main():
             x = x.unsqueeze(2)
             conditional = conditional.squeeze(3)
 
-            #Update D network: maximize log(D(x|y)) + log(1 - D(G(z|y)))
+            # Update D network: maximize log(D(x|y)) + log(1 - D(G(z|y)))
             D_x, D_G_z1, errD = d_train_step(
                 batch_size,
                 seq_len,
@@ -353,9 +349,9 @@ def main():
                 device)
 
             if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                      % (epoch, num_epochs, i, len(dataloader),
-                         errD, errG, D_x, D_G_z1, D_G_z2))
+                print(
+                    '[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f' %
+                    (epoch, num_epochs, i, len(dataloader), errD, errG, D_x, D_G_z1, D_G_z2))
 
 
 if __name__ == '__main__':
