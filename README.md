@@ -1,1 +1,1 @@
-# GDP_GAN
+# Simulating US GDP with a CGAN  
