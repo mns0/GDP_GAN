@@ -1,1 +1,1 @@
-# Simulating US GDP with a CGAN  
+# United States GDP predictor with a CGAN  
