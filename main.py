@@ -14,9 +14,6 @@ import numpy as np
 
 from torch.nn import init
 
-import torch.nn as nn
-import torch.nn.functional as F
-
 
 # Create a dataloader
 class GDPData(Dataset):
@@ -28,8 +25,6 @@ class GDPData(Dataset):
         if normalize:
             self.normalize_table = np.zeros((df.shape[1], 2))  # (min, max)
             self.normalize(df)
-            #save_table
-            np.savetxt(csv_file+"normalization_table.txt",self.normalize_table)
 
         df.drop(df[(df.shape[0] // series_length *
                     series_length):].index, inplace=True)
@@ -44,7 +39,6 @@ class GDPData(Dataset):
         y = df["GDP"]
         y = np.array(np.array_split(y.to_numpy(), y.shape[0] // series_length))
         self.t = x.shape[0]
-        #print("d", type(x),x.shape.shape)
         x = np.expand_dims(x, -1)
         full = np.expand_dims(full, -1)
         self.x = torch.from_numpy(x).float()
@@ -64,6 +58,7 @@ class GDPData(Dataset):
             self.normalize_table[idx][1] = m
             x[c] = 2 * ((x[c] - l) / (m - l)) - 1
 
+
     def unnormalize(self, x):
         """
           Unnormalize data from [-1,1] range
@@ -75,7 +70,9 @@ class GDPData(Dataset):
             _min = self.normalize_table[idx][0]
             _max = self.normalize_table[idx][1]
             x[c] = 0.5* (x*_max - x*_min + _max + _min)
-        return x
+        return x      
+
+
 
     def __len__(self):
         return self.t
@@ -104,11 +101,12 @@ class StatefulLSTM(nn.Module):
         batch_size = x.data.size()[0]
         if self.h is None:
             state_size = [batch_size, self.out_size]
-            self.c = torch.zeros(state_size)
-            self.h = torch.zeros(state_size)
+            self.c = Variable(torch.zeros(state_size)).cuda()
+            self.h = Variable(torch.zeros(state_size)).cuda()
+            #self.c = torch.zeros(state_size)
+            #self.h = torch.zeros(state_size)
         self.h, self.c = self.lstm(x, (self.h, self.c))
         return self.h
-
 
 class LockedDropout(nn.Module):
     def __init__(self):
@@ -141,14 +139,10 @@ class Generator_RNN(nn.Module):
         super(Generator_RNN, self).__init__()
         self.train = train
         self.dropout_prob = dropout_prob
+        self.lstm_basic = nn.LSTMCell(predictor_dim, hidden_dim)
+        self.bn_basic = nn.BatchNorm1d(hidden_dim)
 
-        self.lstm1 = StatefulLSTM(predictor_dim, hidden_dim)
-        self.bn_lstm1 = nn.BatchNorm1d(hidden_dim)
         self.dropout1 = LockedDropout()
-
-        self.lstm2 = StatefulLSTM(hidden_dim, hidden_dim)
-        self.bn_lstm2 = nn.BatchNorm1d(hidden_dim)
-        self.dropout2 = LockedDropout()
         self.fc_output = nn.Sequential(
             nn.Linear(hidden_dim, target_size), nn.Tanh())
 
@@ -157,7 +151,7 @@ class Generator_RNN(nn.Module):
         self.dropout1.reset_state()
 
     def forward(self, inputx, inputc):
-        self.reset_state()
+        #self.reset_state()
         # input - batch_size x time_steps x features
         input = torch.cat((inputx, inputc), 2)
         batch_size, no_of_timesteps, features = input.size(
@@ -166,14 +160,10 @@ class Generator_RNN(nn.Module):
         #print("In generator input size", input.shape)
 
         # lstm on each sequence
-        for i in range(batch_size):
-            h = self.lstm1(input[i, :, :])
-            h = self.bn_lstm1(h)
-            h = self.dropout1(h)
 
-            h = self.lstm2(h)
-            h = self.bn_lstm2(h)
-            h = self.dropout2(h)
+        for i in range(batch_size):
+            h,_ = self.lstm_basic(input[i, :, :])
+            h = self.dropout1(h,dropout=self.dropout_prob, train=self.train)
             h = self.fc_output(h)
             h = torch.squeeze(h)
             outputs.append(h)
@@ -194,8 +184,8 @@ class Discriminator_RNN(nn.Module):
         super(Discriminator_RNN, self).__init__()
         self.train = train
         self.dropout_prob = dropout_prob
-        self.lstm1 = StatefulLSTM(predictor_dim, hidden_dim)
-        self.bn_lstm1 = nn.BatchNorm1d(hidden_dim)
+        self.lstm_basic = nn.LSTMCell(predictor_dim, hidden_dim)
+        self.bn_basic = nn.BatchNorm1d(hidden_dim)
         self.dropout1 = LockedDropout()
         self.fc_output = nn.Sequential(
             nn.Linear(
@@ -208,15 +198,15 @@ class Discriminator_RNN(nn.Module):
         self.dropout1.reset_state()
 
     def forward(self, _inputx, _inputy):
-        self.reset_state()
+        #self.reset_state()
         # input - batch_size x time_steps x features
         _input = torch.cat((_inputx, _inputy), 2)
         no_of_timesteps = _input.shape[1]
         outputs = []
+
         for i in range(no_of_timesteps):
-            h = self.lstm1(_input[:, i, :])
-            h = self.bn_lstm1(h)
-            h = self.dropout1(h, dropout=self.dropout_prob, train=self.train)
+            h,_ = self.lstm_basic(_input[:, i, :])
+            #h = self.dropout1(h)
             outputs.append(h)
 
         outputs = torch.stack(outputs)  # time_steps, batch_size, features
@@ -230,7 +220,7 @@ class Discriminator_RNN(nn.Module):
         return h
 
 
-def d_train_step(
+def d_train_step(fake_data,
         batch_size,
         seq_len,
         x,
@@ -251,10 +241,10 @@ def d_train_step(
 
     # training with the fake batch
     # G(Z|Y) normal noise + condition
-    noise = 2*torch.randn(batch_size, seq_len, 1, device=device)-1
-    fake_data = netG(noise, conditional)
+    noise = torch.randn(batch_size, seq_len, 1, device=device)
+    #fake_data = netG(noise, conditional)
     flabel = torch.full((batch_size, ), fake_label, device=device)
-    fake_data = torch.unsqueeze(fake_data, 2)
+    #fake_data = torch.unsqueeze(fake_data, 2)
     output = netD(fake_data.detach(), conditional.detach()).view(-1)
     errD_fake = criterion(output, flabel)
 
@@ -277,35 +267,36 @@ def g_train_step(
 
     netG.zero_grad()
     label = torch.full((batch_size, ), real_label, device=device)
-    noise = 2*torch.randn(batch_size, seq_len, 1, device=device)-1
+    noise = torch.randn(batch_size, seq_len, 1, device=device)
     fake_data = netG(noise, conditional).unsqueeze(2)
-    output = netD(fake_data.detach(), conditional.detach()).view(-1)
+    output = netD(fake_data, conditional).view(-1)
     errG = criterion(output, label)
     errG.backward()
     D_G_z2 = output.mean().item()
     optimizerG.step()
-    return errG.mean().item(), D_G_z2
+    return fake_data, errG.mean().item(), D_G_z2
 
 
-def main():
-    epoches, batch_size = 100, 20
+
+def main():    
+    epoches, batch_size = 201, 20
     real_label, fake_label = 1, 0
-    num_epochs = 100
+    num_epochs = 2000
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # get the data
-    dir = './'
+    dir = './drive/My Drive/gdp_data/'
     train_data = 'Preprocessed_data_gdp_pc.dat'
 
     gdp_dataset = GDPData(dir + train_data, normalize=True)
     dataloader = torch.utils.data.DataLoader(
-        gdp_dataset, batch_size=batch_size, shuffle=False)
+        gdp_dataset, batch_size=batch_size, shuffle=True)
 
-    kwagsD = {"target_size": 1, "predictor_dim": 10, "hidden_dim": 200,
-              "num_layers": 1, "dropout_prob": 0, 'train': True}
+    kwagsD = {"target_size": 1, "predictor_dim": 10, "hidden_dim": 300,
+              "num_layers": 5, "dropout_prob": 0.5, 'train': True}
 
-    kwagsG = {"target_size": 1, "predictor_dim": 10, "hidden_dim": 200,
-              "num_layers": 1, "dropout_prob": 0, 'train': True}
+    kwagsG = {"target_size": 1, "predictor_dim": 10, "hidden_dim": 300,
+              "num_layers": 5, "dropout_prob": 0.5, 'train': True}
 
     netD = Discriminator_RNN(**kwagsD).to(device)
     netG = Generator_RNN(**kwagsG).to(device)
@@ -321,13 +312,12 @@ def main():
 
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
-    #noise = torch.randn(batch_size, seq_len, 1, device=device)
-    #fake_data = netG(noise, conditional).unsqueeze(2)
+    #fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+
     # Establish convention for real and fake labels during training
-    arrloss = np.zeros((num_epochs,2))
+
     for epoch in range(num_epochs):
         print("epoch: ", epoch)
-        dloss, gloss = 0,0
         for i, data in enumerate(dataloader):
             conditional, x, _ = data
             if conditional.size(0) < 20:
@@ -338,8 +328,22 @@ def main():
             x = x.unsqueeze(2)
             conditional = conditional.squeeze(3)
 
+
+            # Update G network: maximize log(D(G(z|y)))
+            fake, errG, D_G_z2 = g_train_step(
+                batch_size,
+                seq_len,
+                netD,
+                netG,
+                criterion,
+                real_label,
+                conditional,
+                optimizerG,
+                device)
+
+
             # Update D network: maximize log(D(x|y)) + log(1 - D(G(z|y)))
-            D_x, D_G_z1, errD = d_train_step(
+            D_x, D_G_z1, errD = d_train_step(fake,
                 batch_size,
                 seq_len,
                 x,
@@ -352,32 +356,17 @@ def main():
                 criterion,
                 device)
 
-            # Update G network: maximize log(D(G(z|y)))
-            errG, D_G_z2 = g_train_step(
-                batch_size,
-                seq_len,
-                netD,
-                netG,
-                criterion,
-                real_label,
-                conditional,
-                optimizerG,
-                device)
-            dloss, gloss = errD + dloss, errG + gloss
+
             if i % 50 == 0:
                 print(
                     '[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f' %
                     (epoch, num_epochs, i, len(dataloader), errD, errG, D_x, D_G_z1, D_G_z2))
 
-        
-        arrloss[i] = [dloss,gloss]
-        if epoch % 5 == 0:
-            torch.save(netD, f'./models/netD_e{epoch}.pth')
-            torch.save(netG, f'./models/netG_e{epoch}.pth')
 
+        if epoch % 50 == 0:
+            torch.save(netD, f'./drive/My Drive/gdp_data/models/alt_netD_e{epoch}.pth')
+            torch.save(netG, f'./drive/My Drive/gdp_data/models/alt_netG_e{epoch}.pth')
 
-
-    np.savetxt("loss.txt",arrloss)
 
 if __name__ == '__main__':
     main()
